@@ -3,7 +3,7 @@
 'audit
 
 Usage:
-  audit.R -b <id> -m <id> -o <file> [-a <int>] [-l <file>] [-s <query>] [-p <var>] [-f <str>] [-r <op>] [-t <dir>]
+  audit.R -b <id> -m <id> -o <file> [-a <int>] [-l <file>] [-s <query>] [-p <var>] [-f <str>] [-r <op>] [-t <dir>] [-q <var>]
 
 Options:
   -h --help                          Show this screen.
@@ -16,7 +16,8 @@ Options:
   -f <str> --suffix=<str>            Suffix to append to barcode to select a profile file [default: _normalized_variable_selected.csv].
   -p <var> --group_by=<var>          Group by column [default: Metadata_Well].
   -r <op> --operation=<op>           Audit operation [default: replicate_quality].
-  -t <dir> --tmpdir=<dir>            Temporary directory [default: /tmp]. ' -> doc
+  -t <dir> --tmpdir=<dir>            Temporary directory [default: /tmp].
+  -q <var> --null_quantile=<var>     Quantile of null distribution to extract [default: 0.95]' -> doc
 
 suppressWarnings(suppressMessages(library(docopt)))
 
@@ -46,6 +47,8 @@ group_by <- stringr::str_split(opts[["group_by"]], ",")[[1]]
 
 operation <- opts[["operation"]]
 
+null_quantile <- as.numeric(paste(opts[["null_quantile"]]))
+
 backend_dir <- paste("../..", "backend", batch_id, sep = "/")
 
 metadata_dir <- paste("../..", "metadata", batch_id, sep = "/")
@@ -56,15 +59,15 @@ filelist <- barcode_platemap %>%
   filter(Plate_Map_Name == plate_map_name) %>%
   mutate(filename = normalizePath(paste0(backend_dir, "/", Assay_Plate_Barcode, "/", Assay_Plate_Barcode, suffix)))
 
-df <- filelist$filename %>% 
+df <- filelist$filename %>%
   map_df(
     function(filename) {
       if (file.exists(filename)) {
         suppressMessages(readr::read_csv(filename))
-        
+
       } else {
         tibble::data_frame()
-        
+
       }
     }
   )
@@ -101,8 +104,8 @@ set.seed(24)
 correlations <- df %>%
   median_pairwise_correlation(variables, group_by)
 
-null_threshold <- 
-  1:iterations %>% 
+null_threshold <-
+  1:iterations %>%
   map_df(function(i) {
     df %>%
       tidyr::unite_("group_by", group_by) %>%
@@ -110,13 +113,14 @@ null_threshold <-
       median_pairwise_correlation(variables, "group_by")
   }) %>%
   magrittr::extract2("correlation") %>%
-  quantile(0.95, na.rm = TRUE)
+  quantile(null_quantile, na.rm = TRUE)
 
 result <-
   tibble::data_frame(
     plate_map_name = plate_map_name,
     null_threshold = null_threshold,
-    fraction_strong = (sum(correlations$correlation > null_threshold) / nrow(correlations))
+    fraction_strong = (sum(correlations$correlation > null_threshold) / nrow(correlations)),
+    null_quantile = null_quantile
     )
 
 knitr::kable(result)
